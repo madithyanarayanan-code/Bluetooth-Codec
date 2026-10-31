@@ -19,17 +19,18 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Generate Project and Build APK
-        shell: python3 {0}
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Generate Complete Android Project Files
+        shell: bash
         run: |
-          import pathlib, subprocess, urllib.request, zipfile
+          mkdir -p gradle/wrapper
+          mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/drawable
+          mkdir -p app/src/main/java/com/app/codecswitcher
 
-          def write_file(path, content):
-              p = pathlib.Path(path)
-              p.parent.mkdir(parents=True, exist_ok=True)
-              p.write_text(content.strip() + "\n", encoding="utf-8")
-
-          write_file("settings.gradle.kts", r'''
+          cat << 'EOF' > settings.gradle.kts
           pluginManagement {
               repositories {
                   google()
@@ -46,16 +47,16 @@ jobs:
           }
           rootProject.name = "CodecSwitcher"
           include(":app")
-          ''')
+          EOF
 
-          write_file("build.gradle.kts", r'''
+          cat << 'EOF' > build.gradle.kts
           plugins {
               id("com.android.application") version "8.2.2" apply false
               id("org.jetbrains.kotlin.android") version "1.9.22" apply false
           }
-          ''')
+          EOF
 
-          write_file("gradle/wrapper/gradle-wrapper.properties", r'''
+          cat << 'EOF' > gradle/wrapper/gradle-wrapper.properties
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
           distributionUrl=https\://services.gradle.org/distributions/gradle-8.5-bin.zip
@@ -63,9 +64,9 @@ jobs:
           validateDistributionUrl=true
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
-          ''')
+          EOF
 
-          write_file("app/build.gradle.kts", r'''
+          cat << 'EOF' > app/build.gradle.kts
           plugins {
               id("com.android.application")
               id("org.jetbrains.kotlin.android")
@@ -101,9 +102,9 @@ jobs:
               implementation("androidx.appcompat:appcompat:1.6.1")
               implementation("com.google.android.material:material:1.11.0")
           }
-          ''')
+          EOF
 
-          write_file("app/src/main/AndroidManifest.xml", r'''
+          cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
@@ -139,9 +140,9 @@ jobs:
                   </service>
               </application>
           </manifest>
-          ''')
+          EOF
 
-          write_file("app/src/main/res/values/strings.xml", r'''
+          cat << 'EOF' > app/src/main/res/values/strings.xml
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
               <string name="app_name">BT Codec Switcher</string>
@@ -150,9 +151,9 @@ jobs:
               <string name="no_device_connected">No A2DP device connected</string>
               <string name="oem_restricted_toast">OEM restricts background codec changes. Opening Developer Options…</string>
           </resources>
-          ''')
+          EOF
 
-          write_file("app/src/main/res/drawable/ic_tile.xml", r'''
+          cat << 'EOF' > app/src/main/res/drawable/ic_tile.xml
           <?xml version="1.0" encoding="utf-8"?>
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
               android:width="24dp"
@@ -163,9 +164,9 @@ jobs:
                   android:fillColor="#FFFFFF"
                   android:pathData="M17.71,7.71L12,2h-1v7.59L6.41,5 5,6.41 10.59,12 5,17.59 6.41,19 11,14.41V22h1l5.71,-5.71 -4.3,-4.29 4.3,-4.29zM13,5.83l1.88,1.88L13,9.59V5.83zM14.88,16.29L13,18.17v-3.76l1.88,1.88z" />
           </vector>
-          ''')
+          EOF
 
-          write_file("app/src/main/java/com/app/codecswitcher/BluetoothCodecHelper.kt", r'''
+          cat << 'EOF' > app/src/main/java/com/app/codecswitcher/BluetoothCodecHelper.kt
           package com.app.codecswitcher
 
           import android.Manifest
@@ -193,11 +194,19 @@ jobs:
               LDAC("LDAC", 4);
 
               companion object {
-                  fun fromCodecType(type: Int): CodecOption? = entries.find { it.codecType == type }
+                  fun fromCodecType(type: Int): CodecOption? {
+                      for (entry in entries) {
+                          if (entry.codecType == type) return entry
+                      }
+                      return null
+                  }
+
                   fun nextAfter(current: CodecOption?): CodecOption {
                       val all = entries
                       if (current == null) return SBC
-                      return all[(all.indexOf(current) + 1) % all.size]
+                      val idx = all.indexOf(current)
+                      val nextIdx = (idx + 1) % all.size
+                      return all[nextIdx]
                   }
               }
           }
@@ -210,7 +219,7 @@ jobs:
 
           class BluetoothCodecHelper(private val context: Context) {
               companion object {
-                  private const val CODEC_PRIORITY_HIGHEST = 1_000_000
+                  private const val CODEC_PRIORITY_HIGHEST = 1000000
                   private const val PREFS_NAME = "codec_prefs"
                   private const val KEY_LAST_CODEC = "last_codec_type"
               }
@@ -223,7 +232,9 @@ jobs:
                           context,
                           Manifest.permission.BLUETOOTH_CONNECT
                       ) == PackageManager.PERMISSION_GRANTED
-                  } else true
+                  } else {
+                      true
+                  }
               }
 
               fun getSavedCodec(): CodecOption {
@@ -412,276 +423,4 @@ jobs:
                   mainHandler.post {
                       Toast.makeText(context.applicationContext, message, Toast.LENGTH_LONG).show()
                   }
-              }
-          }
-          ''')
-
-          write_file("app/src/main/java/com/app/codecswitcher/CodecTileService.kt", r'''
-          package com.app.codecswitcher
-
-          import android.app.PendingIntent
-          import android.content.Intent
-          import android.os.Build
-          import android.provider.Settings
-          import android.service.quicksettings.Tile
-          import android.service.quicksettings.TileService
-
-          class CodecTileService : TileService() {
-              private lateinit var codecHelper: BluetoothCodecHelper
-
-              override fun onCreate() {
-                  super.onCreate()
-                  codecHelper = BluetoothCodecHelper(this)
-              }
-
-              override fun onStartListening() {
-                  super.onStartListening()
-                  refreshTileState()
-              }
-
-              override fun onClick() {
-                  super.onClick()
-                  if (!codecHelper.hasBluetoothPermission()) {
-                      launchIntentFromTile(Intent(this, MainActivity::class.java).apply {
-                          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                      })
-                      return
-                  }
-                  val nextCodec = CodecOption.nextAfter(codecHelper.getSavedCodec())
-                  codecHelper.saveCodec(nextCodec)
-                  updateTileUi(nextCodec.displayName, true)
-
-                  codecHelper.setCodecPreference(nextCodec) { success, _, fallbackLaunched ->
-                      if (success) {
-                          refreshTileState()
-                      } else if (fallbackLaunched) {
-                          launchIntentFromTile(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).apply {
-                              addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                          })
-                      }
-                  }
-              }
-
-              private fun refreshTileState() {
-                  if (!codecHelper.hasBluetoothPermission()) {
-                      updateTileUi("Permit App", false)
-                      return
-                  }
-                  codecHelper.queryActiveStatus { status ->
-                      val currentCodec = status.activeCodec ?: codecHelper.getSavedCodec()
-                      updateTileUi(currentCodec.displayName, status.deviceName != null)
-                  }
-              }
-
-              private fun updateTileUi(codecName: String, isActive: Boolean) {
-                  val tile = qsTile ?: return
-                  tile.state = if (isActive) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                      tile.label = getString(R.string.tile_label)
-                      tile.subtitle = codecName
-                  } else {
-                      tile.label = "${getString(R.string.tile_label)}: $codecName"
-                  }
-                  tile.updateTile()
-              }
-
-              @Suppress("DEPRECATION")
-              private fun launchIntentFromTile(intent: Intent) {
-                  try {
-                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                          val pi = PendingIntent.getActivity(
-                              this, 0, intent,
-                              PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                          )
-                          startActivityAndCollapse(pi)
-                      } else {
-                          startActivityAndCollapse(intent)
-                      }
-                  } catch (_: Throwable) {
-                      startActivity(intent)
-                  }
-              }
-          }
-          ''')
-
-          write_file("app/src/main/java/com/app/codecswitcher/MainActivity.kt", r'''
-          package com.app.codecswitcher
-
-          import android.Manifest
-          import android.graphics.Typeface
-          import android.os.Build
-          import android.os.Bundle
-          import android.view.Gravity
-          import android.view.ViewGroup
-          import android.widget.Button
-          import android.widget.LinearLayout
-          import android.widget.ScrollView
-          import android.widget.TextView
-          import androidx.activity.result.contract.ActivityResultContracts
-          import androidx.appcompat.app.AppCompatActivity
-          import androidx.core.view.setPadding
-
-          class MainActivity : AppCompatActivity() {
-              private lateinit var codecHelper: BluetoothCodecHelper
-              private lateinit var permissionStatusText: TextView
-              private lateinit var deviceStatusText: TextView
-              private lateinit var activeCodecText: TextView
-              private lateinit var lastActionText: TextView
-
-              private val permissionLauncher =
-                  registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-                      updatePermissionBanner(granted)
-                      if (granted) refreshBluetoothStatus()
-                  }
-
-              override fun onCreate(savedInstanceState: Bundle?) {
-                  super.onCreate(savedInstanceState)
-                  codecHelper = BluetoothCodecHelper(this)
-                  setContentView(buildContentView())
-                  checkAndRequestPermissions()
-              }
-
-              override fun onResume() {
-                  super.onResume()
-                  updatePermissionBanner(codecHelper.hasBluetoothPermission())
-                  if (codecHelper.hasBluetoothPermission()) refreshBluetoothStatus()
-              }
-
-              private fun buildContentView(): ScrollView {
-                  val density = resources.displayMetrics.density
-                  fun dp(v: Int): Int = (v * density).toInt()
-
-                  val scrollView = ScrollView(this)
-                  val container = LinearLayout(this).apply {
-                      orientation = LinearLayout.VERTICAL
-                      setPadding(dp(24))
-                  }
-
-                  container.addView(TextView(this).apply {
-                      text = "Bluetooth Codec Switcher"
-                      textSize = 22f
-                      setTypeface(typeface, Typeface.BOLD)
-                      setPadding(0, 0, 0, dp(16))
-                  })
-
-                  permissionStatusText = TextView(this).apply {
-                      textSize = 15f
-                      setPadding(0, 0, 0, dp(8))
-                  }
-                  container.addView(permissionStatusText)
-
-                  deviceStatusText = TextView(this).apply {
-                      text = "Connected Device: Checking..."
-                      textSize = 16f
-                      setTypeface(typeface, Typeface.BOLD)
-                      setPadding(0, 0, 0, dp(6))
-                  }
-                  container.addView(deviceStatusText)
-
-                  activeCodecText = TextView(this).apply {
-                      text = "Active Codec: Unknown"
-                      textSize = 16f
-                      setPadding(0, 0, 0, dp(16))
-                  }
-                  container.addView(activeCodecText)
-
-                  container.addView(Button(this).apply {
-                      text = "Refresh Connected Device & Codec"
-                      setOnClickListener {
-                          checkAndRequestPermissions()
-                          refreshBluetoothStatus()
-                      }
-                  })
-
-                  container.addView(TextView(this).apply {
-                      text = "Test Codec Switching:"
-                      textSize = 16f
-                      setTypeface(typeface, Typeface.BOLD)
-                      setPadding(0, dp(24), 0, dp(8))
-                  })
-
-                  CodecOption.entries.forEach { codec ->
-                      container.addView(Button(this).apply {
-                          text = "Switch to ${codec.displayName}"
-                          setOnClickListener {
-                              lastActionText.text = "Attempting to switch to ${codec.displayName}..."
-                              codecHelper.setCodecPreference(codec) { _, message, _ ->
-                                  lastActionText.text = message
-                                  refreshBluetoothStatus()
-                              }
-                          }
-                      })
-                  }
-
-                  container.addView(Button(this).apply {
-                      text = "Open Developer Options Manually"
-                      setOnClickListener { codecHelper.launchDeveloperOptions() }
-                  }, LinearLayout.LayoutParams(
-                      ViewGroup.LayoutParams.MATCH_PARENT,
-                      ViewGroup.LayoutParams.WRAP_CONTENT
-                  ).apply { topMargin = dp(16) })
-
-                  lastActionText = TextView(this).apply {
-                      text = "Tip: Add the 'BT Codec' tile to your Quick Settings panel to cycle SBC -> AAC -> aptX -> LDAC."
-                      textSize = 14f
-                      gravity = Gravity.START
-                      setPadding(0, dp(20), 0, 0)
-                  }
-                  container.addView(lastActionText)
-
-                  scrollView.addView(container)
-                  return scrollView
-              }
-
-              private fun checkAndRequestPermissions() {
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !codecHelper.hasBluetoothPermission()) {
-                      permissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
-                  } else {
-                      updatePermissionBanner(true)
-                  }
-              }
-
-              private fun updatePermissionBanner(granted: Boolean) {
-                  permissionStatusText.text = if (granted) {
-                      "Permission Status: BLUETOOTH_CONNECT Granted"
-                  } else {
-                      "Permission Status: BLUETOOTH_CONNECT Required (Tap Refresh)"
-                  }
-              }
-
-              private fun refreshBluetoothStatus() {
-                  if (!codecHelper.hasBluetoothPermission()) {
-                      deviceStatusText.text = "Connected Device: Permission Required"
-                      activeCodecText.text = "Active Codec: N/A"
-                      return
-                  }
-                  codecHelper.queryActiveStatus { status ->
-                      deviceStatusText.text = if (status.deviceName != null) {
-                          "Connected Device: ${status.deviceName}"
-                      } else {
-                          "Connected Device: None (Connect A2DP headphones)"
-                      }
-                      val codecLabel = status.activeCodec?.displayName
-                          ?: status.rawCodecType?.let { "Type ID ($it)" }
-                          ?: "Saved Preference (${codecHelper.getSavedCodec().displayName})"
-                      activeCodecText.text = "Active Codec: $codecLabel"
-                  }
-              }
-          }
-          ''')
-
-          urllib.request.urlretrieve("https://services.gradle.org/distributions/gradle-8.5-bin.zip", "/tmp/gradle.zip")
-          with zipfile.ZipFile("/tmp/gradle.zip") as z:
-              z.extractall("/tmp")
-          gradle_bin = pathlib.Path("/tmp/gradle-8.5/bin/gradle")
-          gradle_bin.chmod(0o755)
-          subprocess.run([str(gradle_bin), "assembleDebug", "--no-daemon"], check=True)
-          apk = pathlib.Path("app/build/outputs/apk/debug/app-debug.apk")
-          assert apk.is_file(), "APK was not generated!"
-
-      - name: Upload Compiled Debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+  
